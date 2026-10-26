@@ -124,7 +124,7 @@ func TestControlAdjacency(t *testing.T) {
 		want   []observedFinding
 	}{
 		{"assigned condition", "def f():\n    ready = check()\n    # attached\n    if ready:\n        return ready\n", nil},
-		{"two statement preceding group", "def f():\n    prepare()\n    ready = check()\n    if ready:\n        pass\n", []observedFinding{{analysis.ControlCuddle, analysis.Medium, 4}}},
+		{"two statement preceding group", "def f():\n    prepare()\n    ready = check()\n    if ready:\n        pass\n", []observedFinding{{analysis.ControlCuddle, analysis.Medium, 3}}},
 		{"unrelated assignment", "def f():\n    ready = check()\n    if other:\n        pass\n", []observedFinding{{analysis.ControlCuddle, analysis.Medium, 3}}},
 		{"header does not include body", "def f():\n    ready = check()\n    if other:\n        consume(ready)\n", []observedFinding{{analysis.ControlCuddle, analysis.Medium, 3}}},
 		{"exact identifier matching", "def f():\n    ready = check()\n    if already_ready:\n        pass\n", []observedFinding{{analysis.ControlCuddle, analysis.Medium, 3}}},
@@ -214,5 +214,52 @@ func TestCancelledContextIsNotCleanCoverage(t *testing.T) {
 	if result.Coverage.Status != analysis.Skipped || len(result.Errors) != 1 || !strings.Contains(result.Errors[0].Message, context.Canceled.Error()) {
 		t.Errorf("cancelled coverage/errors = %#v / %#v", result.Coverage, result.Errors)
 	}
+	assertFindings(t, result, nil)
+}
+
+func TestControlPairOuterBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source string
+		line   int
+	}{
+		{"crowded pair", "def f():\n    prepare()\n    ready = check()\n    if ready:\n        return ready\n", 3},
+		{"separated pair", "def f():\n    prepare()\n\n    ready = check()\n    if ready:\n        return ready\n", 0},
+		{"internal blank does not clear crowding", "def f():\n    prepare()\n    ready = check()\n\n    if ready:\n        return ready\n", 3},
+		{"isolated internal blank stays accepted", "def f():\n    ready = check()\n\n    if ready:\n        return ready\n", 0},
+		{"both boundaries separated", "def f():\n    prepare()\n\n    ready = check()\n\n    if ready:\n        return ready\n", 0},
+		{"unrelated separated control", "def f():\n    prepare()\n    ready = check()\n\n    if other:\n        return ready\n", 0},
+		{"attached comments stay with their statements", "def f():\n    prepare()\n    # Assignment comment.\n    ready = check()\n    # Check comment.\n    if ready:\n        return ready\n", 4},
+		{"loop pair", "def f():\n    prepare()\n    items = load()\n    for item in items:\n        use(item)\n", 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := explicitSettings()
+			config.StatementRun.Enabled = false
+			config.ReturnSeparation.Enabled = false
+			config.ControlCuddle.Level = analysis.High
+			result := Analyze(context.Background(), []byte(tc.source), "reported/source.py", config)
+			assertChecked(t, result)
+			var want []observedFinding
+			if tc.line != 0 {
+				want = []observedFinding{{analysis.ControlCuddle, analysis.High, tc.line}}
+			}
+			assertFindings(t, result, want)
+		})
+	}
+}
+
+func TestCrowdedUnknownControlTargetRemainsPartial(t *testing.T) {
+	config := explicitSettings()
+	config.StatementRun.Enabled = false
+	config.ReturnSeparation.Enabled = false
+	source := []byte("def f():\n    prepare()\n    state.ready = check()\n\n    if state.ready:\n        return state\n")
+	result := Analyze(context.Background(), source, "reported/source.py", config)
+	if result.Coverage.Status != analysis.Partial || len(result.Errors) != 0 {
+		t.Fatalf("uncertain pair coverage=%+v errors=%+v", result.Coverage, result.Errors)
+	}
+	assertFindings(t, result, nil)
+	source = []byte("def f():\n    prepare()\n\n    state.ready = check()\n\n    if state.ready:\n        return state\n")
+	result = Analyze(context.Background(), source, "reported/source.py", config)
+	assertChecked(t, result)
 	assertFindings(t, result, nil)
 }

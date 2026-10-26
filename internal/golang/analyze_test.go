@@ -125,7 +125,7 @@ func TestControlCuddleAssignmentAndHeaderMatching(t *testing.T) {
 		{"comment attached to condition", "ready := check()\n// Keep this with the guard.\nif ready {}", 0},
 		{"first statement guard", "if ready {}", 0},
 		{"unrelated assignment", "value := read()\nif ready {}", 4},
-		{"two assignments", "first := read()\nready := check()\nif ready {}", 5},
+		{"two assignments", "first := read()\nready := check()\nif ready {}", 4},
 		{"call before loop", "prepare()\nfor ready {}", 4},
 		{"body is not header", "ready := check()\nif other { use(ready) }", 4},
 		{"closure body is not header", "ready := check()\nif predicate(func() bool { return ready }) {}", 4},
@@ -296,4 +296,52 @@ func TestBlankLineInsideBlockCommentDoesNotSeparateRun(t *testing.T) {
 	result := Analyze(context.Background(), source, "comments.go", config)
 	expectChecked(t, result, "comments.go")
 	expectFindings(t, result, "comments.go", []observedFinding{{analysis.MaxStatementRun, analysis.Medium, 3}})
+}
+
+func TestControlPairOuterBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		line int
+	}{
+		{"crowded pair", "prepare()\nvalue, err := load()\nif err != nil { return err }", 4},
+		{"separated pair", "prepare()\n\nvalue, err := load()\nif err != nil { return err }", 0},
+		{"internal blank does not clear crowding", "prepare()\nvalue, err := load()\n\nif err != nil { return err }", 4},
+		{"isolated internal blank stays accepted", "value, err := load()\n\nif err != nil { return err }", 0},
+		{"both boundaries separated", "prepare()\n\nvalue, err := load()\n\nif err != nil { return err }", 0},
+		{"unrelated separated control", "prepare()\nvalue := load()\n\nif other { return nil }", 0},
+		{"attached comments stay with their statements", "prepare()\n// Assignment comment.\nvalue, err := load()\n// Check comment.\nif err != nil { return err }", 5},
+		{"loop pair", "prepare()\nitems := load()\nfor _, item := range items { use(item) }", 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := settings()
+			config.StatementRun.Enabled = false
+			config.ReturnSeparation.Enabled = false
+			config.ControlCuddle.Level = analysis.High
+			source := []byte("package p\nfunc f() error {\n" + tc.body + "\nreturn nil\n}\n")
+			result := Analyze(context.Background(), source, "pair.go", config)
+			expectChecked(t, result, "pair.go")
+			var want []observedFinding
+			if tc.line != 0 {
+				want = []observedFinding{{analysis.ControlCuddle, analysis.High, tc.line}}
+			}
+			expectFindings(t, result, "pair.go", want)
+		})
+	}
+}
+
+func TestCrowdedUnknownControlTargetRemainsPartial(t *testing.T) {
+	config := settings()
+	config.StatementRun.Enabled = false
+	config.ReturnSeparation.Enabled = false
+	source := []byte("package p\nfunc f() {\n prepare()\n state.ready = check()\n\n if state.ready {}\n}\n")
+	result := Analyze(context.Background(), source, "unknown-pair.go", config)
+	if result.Coverage.Status != analysis.Partial || len(result.Errors) != 0 {
+		t.Fatalf("uncertain pair coverage=%+v errors=%+v", result.Coverage, result.Errors)
+	}
+	expectFindings(t, result, "unknown-pair.go", nil)
+	source = []byte("package p\nfunc f() {\n prepare()\n\n state.ready = check()\n\n if state.ready {}\n}\n")
+	result = Analyze(context.Background(), source, "unknown-pair.go", config)
+	expectChecked(t, result, "unknown-pair.go")
+	expectFindings(t, result, "unknown-pair.go", nil)
 }

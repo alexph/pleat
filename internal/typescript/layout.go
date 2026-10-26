@@ -27,6 +27,7 @@ func (a *analyzer) checkBlock(block *sitter.Node) {
 	}
 	a.blocks++
 	runStart := 0
+	previousCrowded := false
 	for i, statement := range statements {
 		if a.ctx.Err() != nil {
 			return
@@ -36,27 +37,31 @@ func (a *analyzer) checkBlock(block *sitter.Node) {
 			a.checkRun(statements, runStart, i)
 			runStart = i
 		}
-		if !separated && a.settings.ControlCuddle.Enabled && control(statement) {
-			accepted, known := false, true
-			if i-runStart == 1 {
-				names, classified := assignmentNames(statements[i-1])
-				known = classified
-				for _, name := range names {
-					if a.headerMentions(statement, name) {
-						accepted = true
-						break
-					}
+		if i > 0 && a.settings.ControlCuddle.Enabled && control(statement) && (!separated || previousCrowded) {
+			previous := statements[i-1]
+			names, known := assignmentNames(previous)
+			matched := false
+			for _, name := range names {
+				if a.headerMentions(statement, name) {
+					matched = true
+					break
 				}
 			}
-			if !known {
-				a.limitation("Assignment target cannot be classified for layout.control-cuddle; this adjacency was not checked", int(statement.StartPosition().Row)+1)
-			} else if !accepted {
-				a.finding(analysis.ControlCuddle, a.settings.ControlCuddle.Level, statement, "Consider separating this control and its attached comments from the preceding statement group.")
+			switch {
+			case !known:
+				a.limitation("Assignment target cannot be classified for layout.control-cuddle; this group boundary was not checked", int(statement.StartPosition().Row)+1)
+			case matched && previousCrowded:
+				a.finding(analysis.ControlCuddle, a.settings.ControlCuddle.Level, previous,
+					"Consider separating this assignment and its following control statement from the preceding group. Put the separator before the assignment and any attached comments, not inside the pair.")
+			case !matched && !separated:
+				a.finding(analysis.ControlCuddle, a.settings.ControlCuddle.Level, statement,
+					"Consider separating this control statement from the preceding statement group. Keep any attached comments with it.")
 			}
 		}
 		if !separated && statement.Kind() == "return_statement" && a.settings.ReturnSeparation.Enabled && len(statements) > a.settings.ReturnBlockLimit {
-			a.finding(analysis.ReturnSeparation, a.settings.ReturnSeparation.Level, statement, fmt.Sprintf("Consider separating this return and its attached comments from the preceding statement group. Its block contains more than %d executable statements.", a.settings.ReturnBlockLimit))
+			a.finding(analysis.ReturnSeparation, a.settings.ReturnSeparation.Level, statement, fmt.Sprintf("Consider separating this return from the preceding group. Keep any attached comments with it. Its block contains more than %d executable statements.", a.settings.ReturnBlockLimit))
 		}
+		previousCrowded = i > 0 && !separated
 	}
 	a.checkRun(statements, runStart, len(statements))
 }

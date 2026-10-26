@@ -83,6 +83,7 @@ func (a *analyzer) checkBlock(statements []ast.Stmt) {
 		}
 	}
 	var previous, first ast.Stmt
+	previousCrowded := false
 	run := 0
 	flushRun := func() {
 		if a.settings.StatementRun.Enabled && run > a.settings.MaxStatements {
@@ -102,19 +103,20 @@ func (a *analyzer) checkBlock(statements []ast.Stmt) {
 			flushRun()
 			run = 0
 		}
-		if previous != nil && !separated {
-			if a.settings.ControlCuddle.Enabled && isControl(stmt) {
-				allowed, known := false, true
-				if run == 1 {
-					allowed, known = assignmentMatches(previous, stmt)
-				}
-				if !known {
-					a.partial(stmt.Pos(), "A Go assignment target could not be matched safely to its following control header.")
-				} else if !allowed {
-					a.finding(analysis.ControlCuddle, a.settings.ControlCuddle.Level, unlabel(stmt).Pos(),
-						"Consider separating this control statement and its attached comments from the preceding statement group.")
-				}
+		if previous != nil && a.settings.ControlCuddle.Enabled && isControl(stmt) && (!separated || previousCrowded) {
+			matched, known := assignmentMatches(previous, stmt)
+			switch {
+			case !known:
+				a.partial(stmt.Pos(), "A Go assignment target could not be matched safely to its following control header.")
+			case matched && previousCrowded:
+				a.finding(analysis.ControlCuddle, a.settings.ControlCuddle.Level, previous.Pos(),
+					"Consider separating this assignment and its following control statement from the preceding group. Put the separator before the assignment and any attached comments, not inside the pair.")
+			case !matched && !separated:
+				a.finding(analysis.ControlCuddle, a.settings.ControlCuddle.Level, unlabel(stmt).Pos(),
+					"Consider separating this control statement from the preceding statement group. Keep any attached comments with it.")
 			}
+		}
+		if previous != nil && !separated {
 			if a.settings.ReturnSeparation.Enabled && total > a.settings.ReturnBlockLimit {
 				if ret, ok := unlabel(stmt).(*ast.ReturnStmt); ok {
 					a.finding(analysis.ReturnSeparation, a.settings.ReturnSeparation.Level, ret.Pos(),
@@ -126,6 +128,7 @@ func (a *analyzer) checkBlock(statements []ast.Stmt) {
 			first = stmt
 		}
 		run++
+		previousCrowded = previous != nil && !separated
 		previous = stmt
 	}
 	flushRun()

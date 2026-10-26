@@ -143,7 +143,7 @@ All three rules are enabled in the initial profile and remain advisory.
 | Rule | Behavior | Initial level |
 | --- | --- | --- |
 | `layout.max-statement-run` | Flag more than six executable sibling statements without a separating blank line. | `medium` |
-| `layout.control-cuddle` | Require separation before an `if` or loop, except for a preceding group containing one assignment whose assigned name appears in the control header. | `medium` |
+| `layout.control-cuddle` | Separate an `if` or loop from preceding statements, treating a matching assignment and its control as one boundary unit. | `medium` |
 | `layout.return-separation` | Require separation before a return when its enclosing block contains more than two executable sibling statements. | `low` |
 
 A multiline statement counts once.
@@ -155,6 +155,12 @@ A blank physical line between statements does separate a run, but a blank line i
 
 Control-header identifier matching is syntactic, not name resolution or data-flow analysis.
 The rule permits a direct Go assignment-and-error-check pair without requiring a blank line between them.
+Matching uses the immediately preceding executable sibling, even when a blank line separates it from the control.
+If the assignment directly follows earlier work without a blank, the finding points at the assignment rather than the control.
+The recommendation puts a separator before that assignment and any attached comments.
+A blank only inside the pair does not satisfy this outer boundary.
+An isolated pair with an internal blank remains accepted.
+The rule does not infer dependency chains or require every related statement to be adjacent.
 A control statement that starts its block needs no leading separator.
 Adapters must not split connected clauses, decorators, or comments attached to the following statement.
 If an assignment form cannot be classified safely, skip that adjacency check and record the limitation.
@@ -349,3 +355,25 @@ Language-specific exceptions stay in each adapter's `layout.go`.
 Baseline rule usefulness from the working tool's outputs, then refine limits and exceptions with concrete examples.
 There is no calibrated readability baseline or scientific accuracy target yet.
 Linux packaging, complete syntax-version certification, complexity metrics, and native helper implementations remain outside this delivery.
+
+### Control-group calibration
+
+The correction was verified through analyzer evals and the built CLI in all three languages.
+Crowded pairs and pairs with only an internal blank point to the assignment.
+A separator before the assignment clears the finding.
+Isolated pairs with internal blanks remain accepted.
+Return spacing and statement-run density were not tuned in this change.
+
+The comparison used the same frozen bytes from 21 project Go files, including tests and excluding deliberate `testdata` violations.
+
+| Rule | Before | After |
+| --- | ---: | ---: |
+| `layout.control-cuddle` | 271 | 265 |
+| `layout.max-statement-run` | 37 | 37 |
+| `layout.return-separation` | 48 | 48 |
+
+The density and return findings were exactly unchanged, including locations, priorities, and explanations.
+Six files now explicitly report partial control coverage where assignment targets cannot be classified safely.
+They retain independent findings and produce no run errors.
+The count change is not a measured reduction in false positives.
+The underlying syntactic matching can still associate statements that a reviewer considers separate tasks.

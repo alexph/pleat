@@ -49,13 +49,20 @@ The initial policies are provisional, not calibrated quality measures.
 | Rule | Initial policy | Level |
 | --- | --- | --- |
 | `layout.max-statement-run` | More than six executable sibling statements without a blank line. | `medium` |
-| `layout.control-cuddle` | A control statement needs separation unless the preceding group is one assignment mentioned in its header. | `medium` |
+| `layout.control-cuddle` | Separate a control, or a matched assignment and control as a group, from preceding statements. | `medium` |
 | `layout.return-separation` | A return needs separation when its block contains more than two executable statements. | `low` |
 
 Multiline statements count once.
 Comments do not count as statements or separate a run by themselves.
 Nested blocks are checked independently.
 Python docstrings and TypeScript type-only declarations do not count as executable statements.
+
+A matching assignment and its following control form one boundary unit.
+When earlier statements crowd that unit, the finding points at the assignment.
+Put the separator before the assignment and any comments attached to it.
+A blank only inside the pair does not clear its crowded outer boundary.
+An isolated pair can retain an internal blank.
+Matching is syntactic, and uncertain targets produce partial coverage rather than a guessed separator location.
 
 Create `.pleat.toml` in the invocation directory to override the profile.
 There is no parent-directory search.

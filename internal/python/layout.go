@@ -29,6 +29,7 @@ func (a *analyzer) checkBlock(block *sitter.Node) {
 		first = false
 	}
 	var previous, runStart *sitter.Node
+	previousCrowded := false
 	runLength := 0
 	first = true
 	flushRun := func() {
@@ -53,25 +54,26 @@ func (a *analyzer) checkBlock(block *sitter.Node) {
 			runStart = node
 			runLength = 0
 		}
-		if !separated && a.settings.ControlCuddle.Enabled && isControl(node) {
-			accepted, known := false, true
-			if runLength == 1 {
-				assignment, classified, matches := a.assignmentMatches(previous, controlHeader(node))
-				known = classified
-				accepted = assignment && matches
-			}
-			if !known {
-				a.partial(int(previous.StartPosition().Row)+1, "Unsupported Python assignment target; adjacent control check was skipped")
-			} else if !accepted {
+		if previous != nil && a.settings.ControlCuddle.Enabled && isControl(node) && (!separated || previousCrowded) {
+			assignment, known, matches := a.assignmentMatches(previous, controlHeader(node))
+			matched := assignment && matches
+			switch {
+			case !known:
+				a.partial(int(previous.StartPosition().Row)+1, "Unsupported Python assignment target; control-group check was skipped")
+			case matched && previousCrowded:
+				a.finding(analysis.ControlCuddle, a.settings.ControlCuddle.Level, previous,
+					"Consider separating this assignment and its following control statement from the preceding group. Put the separator before the assignment and any attached comments, not inside the pair.")
+			case !matched && !separated:
 				a.finding(analysis.ControlCuddle, a.settings.ControlCuddle.Level, node,
-					"Consider separating this control statement and its attached comments from the preceding group. That group is not one assignment used in the control header.")
+					"Consider separating this control statement from the preceding statement group. Keep any attached comments with it.")
 			}
 		}
 		if !separated && a.settings.ReturnSeparation.Enabled && node.Kind() == "return_statement" && count > a.settings.ReturnBlockLimit {
 			a.finding(analysis.ReturnSeparation, a.settings.ReturnSeparation.Level, node,
-				fmt.Sprintf("Consider separating this return and its attached comments from the preceding group. Its block contains more than %d executable statements.", a.settings.ReturnBlockLimit))
+				fmt.Sprintf("Consider separating this return from the preceding group. Keep any attached comments with it. Its block contains more than %d executable statements.", a.settings.ReturnBlockLimit))
 		}
 		runLength++
+		previousCrowded = previous != nil && !separated
 		previous = node
 	}
 	flushRun()

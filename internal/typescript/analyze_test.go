@@ -92,7 +92,7 @@ func TestEdges(t *testing.T) {
 		{"layout.max-statement-run", 46, analysis.Medium},
 		{"layout.max-statement-run", 53, analysis.Medium},
 		{"layout.return-separation", 56, analysis.Low},
-		{"layout.control-cuddle", 65, analysis.Medium},
+		{"layout.control-cuddle", 64, analysis.Medium},
 		{"layout.control-cuddle", 73, analysis.Medium},
 	})
 }
@@ -251,4 +251,51 @@ func TestTypeOnlyDeclarationsDoNotCount(t *testing.T) {
 	result := Analyze(context.Background(), source, "types.ts", settings)
 	assertChecked(t, result, "types.ts")
 	assertFindings(t, result, "types.ts", nil)
+}
+
+func TestControlPairOuterBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source string
+		line   int
+	}{
+		{"crowded pair", "function f() {\n prepare();\n const ready = check();\n if (ready) { return ready; }\n}\n", 3},
+		{"separated pair", "function f() {\n prepare();\n\n const ready = check();\n if (ready) { return ready; }\n}\n", 0},
+		{"internal blank does not clear crowding", "function f() {\n prepare();\n const ready = check();\n\n if (ready) { return ready; }\n}\n", 3},
+		{"isolated internal blank stays accepted", "function f() {\n const ready = check();\n\n if (ready) { return ready; }\n}\n", 0},
+		{"both boundaries separated", "function f() {\n prepare();\n\n const ready = check();\n\n if (ready) { return ready; }\n}\n", 0},
+		{"unrelated separated control", "function f() {\n prepare();\n const ready = check();\n\n if (other) { return ready; }\n}\n", 0},
+		{"attached comments stay with their statements", "function f() {\n prepare();\n // Assignment comment.\n const ready = check();\n // Check comment.\n if (ready) { return ready; }\n}\n", 4},
+		{"loop pair", "function f() {\n prepare();\n const items = load();\n for (const item of items) { use(item); }\n}\n", 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := testSettings()
+			config.StatementRun.Enabled = false
+			config.ReturnSeparation.Enabled = false
+			config.ControlCuddle.Level = analysis.High
+			result := Analyze(context.Background(), []byte(tc.source), "pair.ts", config)
+			assertChecked(t, result, "pair.ts")
+			var want []observation
+			if tc.line != 0 {
+				want = []observation{{analysis.ControlCuddle, tc.line, analysis.High}}
+			}
+			assertFindings(t, result, "pair.ts", want)
+		})
+	}
+}
+
+func TestCrowdedUnknownControlTargetRemainsPartial(t *testing.T) {
+	config := testSettings()
+	config.StatementRun.Enabled = false
+	config.ReturnSeparation.Enabled = false
+	source := []byte("function f() {\n prepare();\n state.ready = check();\n\n if (state.ready) { return state; }\n}\n")
+	result := Analyze(context.Background(), source, "unknown-pair.ts", config)
+	if result.Coverage.Status != analysis.Partial || len(result.Errors) != 0 {
+		t.Fatalf("uncertain pair coverage=%+v errors=%+v", result.Coverage, result.Errors)
+	}
+	assertFindings(t, result, "unknown-pair.ts", nil)
+	source = []byte("function f() {\n prepare();\n\n state.ready = check();\n\n if (state.ready) { return state; }\n}\n")
+	result = Analyze(context.Background(), source, "unknown-pair.ts", config)
+	assertChecked(t, result, "unknown-pair.ts")
+	assertFindings(t, result, "unknown-pair.ts", nil)
 }
