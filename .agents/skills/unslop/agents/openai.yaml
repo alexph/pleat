@@ -1,0 +1,5 @@
+interface:
+  display_name: "Unslop"
+  short_description: "Fixes AI tells, must be used for all writing"
+policy:
+  allow_implicit_invocation: true
